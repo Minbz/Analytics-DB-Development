@@ -1,0 +1,160 @@
+---
+title: "Sales Analysis"
+author: "Baozhang Min"
+date: "Summer 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: "2020-2023"
+---
+```{r Connect to cloud DB, echo=FALSE, warning=FALSE}
+library(DBI)
+library(RMySQL)
+library(kableExtra)
+
+# Connect to the cloud DB
+db.user <- "admin"            
+db.password <- "cs5200practicum2"    
+db.name <- "cs5200practicum2"        
+
+db.host <- "cs5200practicum2.cnaq2oqs01ng.ca-central-1.rds.amazonaws.com"      
+
+db.port <- 3306
+
+cloud.con <- dbConnect(
+  RMySQL::MySQL(),
+  host = db.host,
+  port = db.port,
+  user = db.user,
+  dbname = db.name, 
+  password = db.password
+)
+```
+
+# Analytical Query I: 
+## Top five products with the most sales across all years
+```{r Analytical Query I-1, echo=FALSE, warning=FALSE}
+sql <- "
+SELECT product_name, SUM(total_amount_of_month) AS total_amount
+FROM sales_facts
+GROUP BY product_name
+ORDER BY total_amount DESC
+LIMIT 5;
+"
+top.five.products <- dbGetQuery(cloud.con, sql)
+
+# Create the bar chart
+bars <- barplot(top.five.products$total_amount, 
+        names.arg = top.five.products$product_name,
+        main = "Top five products with the most sales across all years",
+        xlab = "Product Name", ylab = "Total Sales Amount",
+        col = "lightblue")
+text(bars, 
+     top.five.products$total_amount/2, 
+     labels = paste0("$ ",top.five.products$total_amount))
+```
+```{r Analytical Query I-2, echo=FALSE, warning=FALSE}
+# Add a kable table in addition to the bar chart above
+top.five.products$total_amount <- paste0("$", top.five.products$total_amount)
+top.five.products$ranking <- seq_along(1:nrow(top.five.products))
+
+# Create HTML table with kableExtra
+top.five.products %>%
+  kable("html", align = "c") %>%
+  kable_styling("striped")
+```
+
+# Analytical Query II: 
+## Total revenue and total units sold per product per quarter
+```{r Analytical Query II, echo=FALSE, warning=FALSE}
+
+sql.start <- "
+SELECT product_name, SUM(total_amount_of_month) AS total_amount, SUM(total_units_of_month) AS total_units
+FROM sales_facts
+WHERE quarter = "
+
+sql.end <- "
+ GROUP BY product_name;"
+
+# Query and combine data for all 4 quarters
+data.by.pro.by.quar <- data.frame()
+for(i in 1:4){
+  sql.full <- paste0(sql.start, i, sql.end)
+  if (i == 1){
+    data.by.pro.by.quar <- dbGetQuery(cloud.con, sql.full)
+    data.by.pro.by.quar$total_amount <- paste0("$", data.by.pro.by.quar$total_amount)
+  }else{
+    result <- dbGetQuery(cloud.con, sql.full)
+    # Remove the first repetitive 'product name' column
+    result <- result[ ,-1]
+    result$total_amount <- paste0("$", result$total_amount)
+    data.by.pro.by.quar <- cbind(data.by.pro.by.quar, result)
+  }
+}
+
+# Create HTML table with kableExtra
+data.by.pro.by.quar %>%
+  kable("html", align = "c") %>%
+  kable_styling("striped") %>%
+  add_header_above(c(" " = 1, "Q1" = 2, "Q2" = 2, "Q3" = 2, "Q4" = 2))
+
+```
+# Analytical Query III
+## Total revenue per product per country
+```{r Analytical Query III-1, echo=FALSE, warning=FALSE}
+
+sql <- "
+SELECT product_name, country, SUM(total_amount_of_month) AS total_revenue
+FROM sales_facts
+GROUP BY product_name, country
+"
+revenue.by.pro.by.country <- dbGetQuery(cloud.con, sql)
+#print(revenue.by.pro.by.country)
+
+```
+```{r Analytical Query III-2, echo=FALSE, warning=FALSE}
+# Plot line chart
+#install.packages("ggplot2")
+library(ggplot2)
+ggplot(revenue.by.pro.by.country, aes(x = reorder(country, -total_revenue), y = total_revenue, color = product_name, group = product_name)) +
+  geom_line() +
+  geom_point(size = 2)+
+  labs(
+    x = NULL,
+    y = "Total Revenue",
+    title = "Total Revenue per Country by Product"
+  ) +
+  theme(axis.text.x = element_text(angle = 50, hjust = 1)) +
+  scale_y_log10(labels = scales::comma) +
+  theme(legend.title = element_blank())
+```
+
+# Analytical Query IV
+## Average sales per sales rep for each quarter
+```{r Analytical Query IV, echo=FALSE, warning=FALSE}
+# Using tidyr library to turn the long df from sql to wide df
+#
+library(tidyr)
+
+sql <- "
+SELECT repID, surname, firstname, quarter, AVG(average_amount_of_month) AS average_sales
+FROM rep_facts
+GROUP BY repID, quarter;
+"
+avg.sales.by.rep <- dbGetQuery(cloud.con, sql)
+
+# Combing 4 lines of a rep in different quarters into 1 line
+avg.sales.by.rep.by.q <- avg.sales.by.rep %>%
+   pivot_wider(names_from = quarter, values_from = average_sales, names_prefix = "average_sales_Q")
+
+# Create HTML table with kableExtra
+avg.sales.by.rep.by.q %>%
+  kable("html", align = "c") %>%
+  kable_styling("striped")
+```
+```{r Disconnect cloud DB, echo=FALSE, warning=FALSE}
+
+dbDisconnect(cloud.con)
+```
+
+
